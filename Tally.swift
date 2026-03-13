@@ -7,13 +7,26 @@ import ServiceManagement
 
 // MARK: - Theme
 
+enum AppTheme: String, Codable, CaseIterable {
+    case system, light, dark
+}
+
 extension Color {
     static let tallyDark = Color(red: 42/255, green: 37/255, blue: 41/255)
     static let tallyLight = Color(red: 243/255, green: 240/255, blue: 231/255)
 }
 
 struct TallyTheme: ViewModifier {
-    @Environment(\.colorScheme) var colorScheme
+    @ObservedObject var manager: TrackerManager
+    @Environment(\.colorScheme) var systemColorScheme
+    
+    var colorScheme: ColorScheme {
+        switch manager.appTheme {
+        case .system: return systemColorScheme
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
     
     var background: Color { colorScheme == .dark ? .tallyDark : .tallyLight }
     var foreground: Color { colorScheme == .dark ? .tallyLight : .tallyDark }
@@ -22,6 +35,7 @@ struct TallyTheme: ViewModifier {
         content
             .background(background)
             .foregroundStyle(foreground)
+            .preferredColorScheme(colorScheme)
     }
 }
 
@@ -42,7 +56,7 @@ struct TallyButtonStyle: ButtonStyle {
 }
 
 extension View {
-    func tallyTheme() -> some View { self.modifier(TallyTheme()) }
+    func tallyTheme(manager: TrackerManager) -> some View { self.modifier(TallyTheme(manager: manager)) }
 }
 
 // MARK: - Models
@@ -62,19 +76,17 @@ struct Session: Identifiable, Codable, Equatable {
     let projectId: UUID
     let startTime: Date
     var endTime: Date?
-    var manualAdjustment: TimeInterval // in seconds
     
     var duration: TimeInterval {
         let end = endTime ?? Date()
-        return max(0, end.timeIntervalSince(startTime) + manualAdjustment)
+        return max(0, end.timeIntervalSince(startTime))
     }
     
-    init(id: UUID = UUID(), projectId: UUID, startTime: Date = Date(), endTime: Date? = nil, manualAdjustment: TimeInterval = 0) {
+    init(id: UUID = UUID(), projectId: UUID, startTime: Date = Date(), endTime: Date? = nil) {
         self.id = id
         self.projectId = projectId
         self.startTime = startTime
         self.endTime = endTime
-        self.manualAdjustment = manualAdjustment
     }
 }
 
@@ -87,6 +99,7 @@ final class TrackerManager: ObservableObject {
     @Published var selectedProjectId: UUID?
     @Published var launchAtLogin: Bool = false
     @Published var idleThreshold: TimeInterval = 300 // default 5 mins
+    @Published var appTheme: AppTheme = .system
     
     private var timer: Timer?
     private var heartbeatTimer: Timer?
@@ -100,6 +113,7 @@ final class TrackerManager: ObservableObject {
     private let activeSessionKey = "tally_active_session"
     private let lastHeartbeatKey = "tally_last_heartbeat"
     private let idleThresholdKey = "tally_idle_threshold"
+    private let appThemeKey = "tally_app_theme"
     
     init() {
         loadData()
@@ -133,6 +147,11 @@ final class TrackerManager: ObservableObject {
         UserDefaults.standard.set(idleThreshold, forKey: idleThresholdKey)
     }
     
+    func setTheme(_ theme: AppTheme) {
+        appTheme = theme
+        UserDefaults.standard.set(theme.rawValue, forKey: appThemeKey)
+    }
+    
     func startSession(for projectId: UUID) {
         if activeSession != nil { stopSession() }
         activeSession = Session(projectId: projectId)
@@ -148,7 +167,7 @@ final class TrackerManager: ObservableObject {
         sessions.insert(session, at: 0)
         activeSession = nil
         stopTimers()
-        clearActiveSession()
+        clearHeartbeat()
         saveData()
     }
     
@@ -196,13 +215,6 @@ final class TrackerManager: ObservableObject {
         saveData()
     }
     
-    func adjustSession(_ session: Session, minutes: Double) {
-        if let index = sessions.firstIndex(where: { $0.id == session.id }) {
-            sessions[index].manualAdjustment += (minutes * 60)
-            saveData()
-        }
-    }
-    
     private func saveData() {
         if let encoded = try? JSONEncoder().encode(projects) { UserDefaults.standard.set(encoded, forKey: projectsKey) }
         if let encoded = try? JSONEncoder().encode(sessions) { UserDefaults.standard.set(encoded, forKey: sessionsKey) }
@@ -218,6 +230,9 @@ final class TrackerManager: ObservableObject {
         let savedIdle = UserDefaults.standard.double(forKey: idleThresholdKey)
         if savedIdle > 0 {
             idleThreshold = savedIdle
+        }
+        if let savedTheme = UserDefaults.standard.string(forKey: appThemeKey), let theme = AppTheme(rawValue: savedTheme) {
+            appTheme = theme
         }
     }
     
@@ -292,8 +307,9 @@ final class TrackerManager: ObservableObject {
     }
     
     func copyToClipboard(session: Session) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(formatDuration(session.duration), forType: .string)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(formatDuration(session.duration), forType: .string)
     }
     
     private func requestNotificationPermission() { UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in } }
@@ -313,7 +329,7 @@ struct RootView: View {
             MainView(manager: manager)
         }
         .frame(width: 320)
-        .tallyTheme()
+        .tallyTheme(manager: manager)
     }
 }
 
@@ -335,7 +351,7 @@ struct MainView: View {
             footer
         }
         .frame(height: 320)
-        .tallyTheme()
+        .tallyTheme(manager: manager)
     }
     
     private var header: some View {
@@ -437,6 +453,28 @@ struct SettingsView: View {
                 
                 ScrollView {
                     VStack(spacing: 16) {
+                        // Appearance Selection
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Appearance", systemImage: "paintbrush")
+                                .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 4)
+                            
+                            HStack(spacing: 8) {
+                                ForEach(AppTheme.allCases, id: \.self) { theme in
+                                    Button(action: { manager.setTheme(theme) }) {
+                                        Text(theme.rawValue.capitalized)
+                                            .font(.caption2)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(manager.appTheme == theme ? Color.primary.opacity(0.2) : Color.primary.opacity(0.05))
+                                            .cornerRadius(4)
+                                    }.buttonStyle(.plain)
+                                }
+                            }
+                            .padding(8)
+                            .background(Color.primary.opacity(0.02))
+                            .cornerRadius(8)
+                        }
+
                         // Launch at Login Toggle
                         Button(action: { manager.toggleLaunchAtLogin() }) {
                             HStack {
@@ -547,13 +585,13 @@ struct SettingsView: View {
                 }
                 .padding()
                 .frame(width: 260)
-                .tallyTheme()
+                .tallyTheme(manager: manager)
                 .cornerRadius(12)
                 .shadow(radius: 10)
             }
         }
         .frame(width: 320, height: 400)
-        .tallyTheme()
+        .tallyTheme(manager: manager)
         .navigationBarBackButtonHidden(true)
         .onAppear {
             manager.refreshLaunchStatus()
@@ -606,9 +644,7 @@ struct HistoryView: View {
                                     }
                                     Spacer()
                                     HStack(spacing: 8) {
-                                        Button("-") { manager.adjustSession(session, minutes: -5) }.buttonStyle(TallyButtonStyle())
                                         Text(manager.formatDuration(session.duration)).monospaced().onTapGesture { manager.copyToClipboard(session: session) }
-                                        Button("+") { manager.adjustSession(session, minutes: 5) }.buttonStyle(TallyButtonStyle())
                                         
                                         Divider().frame(height: 12).padding(.horizontal, 4)
                                         
@@ -662,13 +698,13 @@ struct HistoryView: View {
                 }
                 .padding()
                 .frame(width: 260)
-                .tallyTheme()
+                .tallyTheme(manager: manager)
                 .cornerRadius(12)
                 .shadow(radius: 10)
             }
         }
         .frame(width: 320, height: 400)
-        .tallyTheme()
+        .tallyTheme(manager: manager)
         .navigationBarBackButtonHidden(true)
     }
 }
