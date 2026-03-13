@@ -319,6 +319,37 @@ final class TrackerManager: ObservableObject {
     }
 }
 
+// MARK: - Components
+
+struct TallyFooter: View {
+    var body: some View {
+        HStack {
+            QuitButton()
+            Spacer()
+            Text("v1.0.0").font(.caption2).opacity(0.5)
+        }.padding(.horizontal).padding(.vertical, 8)
+    }
+}
+
+struct QuitButton: View {
+    @State private var isHovering = false
+    
+    var body: some View {
+        Button(action: { NSApplication.shared.terminate(nil) }) {
+            Text("Quit")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .underline(isHovering)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.1)) {
+                isHovering = hovering
+            }
+        }
+    }
+}
+
 // MARK: - Views
 
 struct RootView: View {
@@ -348,7 +379,7 @@ struct MainView: View {
                 .padding()
             }
             Divider().overlay(Color.primary.opacity(0.1))
-            footer
+            TallyFooter()
         }
         .frame(height: 320)
         .tallyTheme(manager: manager)
@@ -400,33 +431,6 @@ struct MainView: View {
             .cornerRadius(6)
         }
     }
-    
-    private var footer: some View {
-        HStack {
-            QuitButton()
-            Spacer()
-            Text("v1.0.0").font(.caption2).opacity(0.5)
-        }.padding(.horizontal).padding(.vertical, 8)
-    }
-}
-
-struct QuitButton: View {
-    @State private var isHovering = false
-    
-    var body: some View {
-        Button(action: { NSApplication.shared.terminate(nil) }) {
-            Text("Quit")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .underline(isHovering)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.1)) {
-                isHovering = hovering
-            }
-        }
-    }
 }
 
 struct SettingsView: View {
@@ -463,16 +467,14 @@ struct SettingsView: View {
                                     Button(action: { manager.setTheme(theme) }) {
                                         Text(theme.rawValue.capitalized)
                                             .font(.caption2)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(manager.appTheme == theme ? Color.primary.opacity(0.2) : Color.primary.opacity(0.05))
-                                            .cornerRadius(4)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 6)
+                                            .background(manager.appTheme == theme ? Color.primary.opacity(0.15) : Color.primary.opacity(0.05))
+                                            .cornerRadius(6)
                                     }.buttonStyle(.plain)
                                 }
                             }
-                            .padding(8)
-                            .background(Color.primary.opacity(0.02))
-                            .cornerRadius(8)
+                            .padding(4)
                         }
 
                         // Launch at Login Toggle
@@ -497,16 +499,14 @@ struct SettingsView: View {
                                     Button(action: { manager.setIdleThreshold(mins) }) {
                                         Text("\(Int(mins))m")
                                             .font(.caption2)
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(manager.idleThreshold == mins * 60 ? Color.primary.opacity(0.2) : Color.primary.opacity(0.05))
-                                            .cornerRadius(4)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 6)
+                                            .background(manager.idleThreshold == mins * 60 ? Color.primary.opacity(0.15) : Color.primary.opacity(0.05))
+                                            .cornerRadius(6)
                                     }.buttonStyle(.plain)
                                 }
                             }
-                            .padding(8)
-                            .background(Color.primary.opacity(0.02))
-                            .cornerRadius(8)
+                            .padding(4)
                         }
 
                         NavigationLink(destination: HistoryView(manager: manager)) {
@@ -544,6 +544,9 @@ struct SettingsView: View {
                         }
                     }.padding()
                 }
+                
+                Divider().overlay(Color.primary.opacity(0.1))
+                TallyFooter()
             }
             
             // Custom Confirmation Overlays
@@ -657,6 +660,9 @@ struct HistoryView: View {
                         }
                     }.padding()
                 }
+                
+                Divider().overlay(Color.primary.opacity(0.1))
+                TallyFooter()
             }
             
             // Confirmation Overlays
