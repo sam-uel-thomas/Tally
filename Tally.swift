@@ -491,10 +491,10 @@ struct SettingsView: View {
     @State private var projectToDelete: Project?
     @State private var projectToAdjust: Project?
     
-    @State private var adjH = ""
-    @State private var adjM = ""
-    @State private var adjS = ""
-    @State private var isNegative = false
+    @State private var adjH = 0
+    @State private var adjM = 0
+    @State private var adjS = 0
+    @State private var initialTotal: TimeInterval = 0
     
     let timeoutOptions: [Double] = [1, 2, 5, 10, 15, 30]
     
@@ -551,7 +551,7 @@ struct SettingsView: View {
                             .padding(4)
                         }
 
-                        // 3. Open on Launch & 4. View Session History (Shrunk)
+                        // 3. Open on Launch & 4. View Session History
                         HStack(spacing: 12) {
                             Button(action: { manager.toggleLaunchAtLogin() }) {
                                 HStack {
@@ -659,15 +659,12 @@ struct SettingsView: View {
             Text("Adjust Time").font(.headline)
             Text(projectToAdjust?.name ?? "").font(.caption).opacity(0.6)
             
-            HStack(spacing: 12) {
-                Button(action: { isNegative.toggle() }) {
-                    Image(systemName: isNegative ? "minus.square.fill" : "plus.square.fill")
-                        .font(.title2)
-                }.buttonStyle(.plain)
-                
-                adjustmentField(value: $adjH, label: "H")
-                adjustmentField(value: $adjM, label: "M")
-                adjustmentField(value: $adjS, label: "S")
+            HStack(spacing: 16) {
+                timeStepper(value: $adjH, label: "H", max: 999)
+                Text(":").font(.title3).offset(y: -8)
+                timeStepper(value: $adjM, label: "M", max: 59)
+                Text(":").font(.title3).offset(y: -8)
+                timeStepper(value: $adjS, label: "S", max: 59)
             }
             
             HStack(spacing: 20) {
@@ -687,30 +684,44 @@ struct SettingsView: View {
         .shadow(radius: 10)
     }
     
-    private func adjustmentField(value: Binding<String>, label: String) -> some View {
+    private func timeStepper(value: Binding<Int>, label: String, max: Int) -> some View {
         VStack(spacing: 4) {
-            TextField("0", text: value)
-                .textFieldStyle(.plain)
-                .multilineTextAlignment(.center)
+            Button(action: { value.wrappedValue = (value.wrappedValue + 1 > max) ? 0 : value.wrappedValue + 1 }) {
+                Image(systemName: "chevron.up")
+                    .font(.caption2)
+                    .padding(4)
+            }.buttonStyle(TallyButtonStyle())
+            
+            Text(String(format: "%02d", value.wrappedValue))
+                .font(.system(.title3, design: .monospaced))
+                .fontWeight(.bold)
                 .frame(width: 40, height: 30)
-                .background(manager.foreground(system: systemColorScheme, opacity: 0.1))
+                .background(manager.foreground(system: systemColorScheme, opacity: 0.05))
                 .cornerRadius(4)
+            
+            Button(action: { value.wrappedValue = (value.wrappedValue - 1 < 0) ? max : value.wrappedValue - 1 }) {
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
+                    .padding(4)
+            }.buttonStyle(TallyButtonStyle())
+            
             Text(label).font(.caption2).opacity(0.4)
         }
     }
     
     private func startAdjustment(for project: Project) {
+        let total = manager.totalTime(for: project.id)
+        initialTotal = total
+        adjH = Int(total) / 3600
+        adjM = (Int(total) % 3600) / 60
+        adjS = Int(total) % 60
         projectToAdjust = project
-        adjH = ""; adjM = ""; adjS = ""; isNegative = false
     }
     
     private func applyAdjustment() {
         guard let p = projectToAdjust else { return }
-        let h = Double(adjH) ?? 0
-        let m = Double(adjM) ?? 0
-        let s = Double(adjS) ?? 0
-        let totalSeconds = (h * 3600) + (m * 60) + s
-        let delta = isNegative ? -totalSeconds : totalSeconds
+        let newTotal = TimeInterval((adjH * 3600) + (adjM * 60) + adjS)
+        let delta = newTotal - initialTotal
         
         withAnimation {
             manager.adjustProjectTotal(id: p.id, delta: delta)
@@ -810,18 +821,22 @@ struct HistoryView: View {
 
 @main
 struct TallyApp: App {
-    @StateObject private var manager = TrackerManager()
+    @StateObject private var manager = TrackerObjectManagerWrapper()
     var body: some Scene {
         MenuBarExtra {
-            RootView(manager: manager)
+            RootView(manager: manager.manager)
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "timer")
-                if let active = manager.activeSession {
-                    Text(manager.formatDuration(manager.totalTime(for: active.projectId))).monospaced()
+                if let active = manager.manager.activeSession {
+                    Text(manager.manager.formatDuration(manager.manager.totalTime(for: active.projectId))).monospaced()
                 }
             }
         }
         .menuBarExtraStyle(.window)
     }
+}
+
+class TrackerObjectManagerWrapper: ObservableObject {
+    @Published var manager = TrackerManager()
 }
