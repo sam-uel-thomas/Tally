@@ -1,0 +1,548 @@
+import Foundation
+import SwiftUI
+import IOKit
+import UserNotifications
+import AppKit
+
+// MARK: - Theme
+
+extension Color {
+    static let tallyDark = Color(red: 42/255, green: 37/255, blue: 41/255)
+    static let tallyLight = Color(red: 243/255, green: 240/255, blue: 231/255)
+}
+
+struct TallyTheme: ViewModifier {
+    @Environment(\.colorScheme) var colorScheme
+    
+    var background: Color { colorScheme == .dark ? .tallyDark : .tallyLight }
+    var foreground: Color { colorScheme == .dark ? .tallyLight : .tallyDark }
+    
+    func body(content: Content) -> some View {
+        content
+            .background(background)
+            .foregroundStyle(foreground)
+    }
+}
+
+struct TallyButtonStyle: ButtonStyle {
+    @State private var isHovering = false
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.7 : (isHovering ? 0.8 : 1.0))
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.1)) {
+                    isHovering = hovering
+                }
+            }
+    }
+}
+
+extension View {
+    func tallyTheme() -> some View { self.modifier(TallyTheme()) }
+}
+
+// MARK: - Models
+
+struct Project: Identifiable, Codable, Equatable {
+    let id: UUID
+    var name: String
+    
+    init(id: UUID = UUID(), name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
+struct Session: Identifiable, Codable, Equatable {
+    let id: UUID
+    let projectId: UUID
+    let startTime: Date
+    var endTime: Date?
+    var manualAdjustment: TimeInterval // in seconds
+    
+    var duration: TimeInterval {
+        let end = endTime ?? Date()
+        return max(0, end.timeIntervalSince(startTime) + manualAdjustment)
+    }
+    
+    init(id: UUID = UUID(), projectId: UUID, startTime: Date = Date(), endTime: Date? = nil, manualAdjustment: TimeInterval = 0) {
+        self.id = id
+        self.projectId = projectId
+        self.startTime = startTime
+        self.endTime = endTime
+        self.manualAdjustment = manualAdjustment
+    }
+}
+
+// MARK: - Tracker Manager
+
+final class TrackerManager: ObservableObject {
+    @Published var projects: [Project] = []
+    @Published var sessions: [Session] = []
+    @Published var activeSession: Session?
+    @Published var selectedProjectId: UUID?
+    
+    private var timer: Timer?
+    private var heartbeatTimer: Timer?
+    private var idleCheckTimer: Timer?
+    
+    private let heartbeatInterval: TimeInterval = 30
+    private let idleThreshold: TimeInterval = 300 
+    private let gapThreshold: TimeInterval = 300 
+    
+    private let projectsKey = "tally_projects"
+    private let sessionsKey = "tally_sessions"
+    private let activeSessionKey = "tally_active_session"
+    private let lastHeartbeatKey = "tally_last_heartbeat"
+    
+    init() {
+        loadData()
+        requestNotificationPermission()
+        checkForInterruptedSession()
+        startIdleCheck()
+        if activeSession != nil { startTimers() }
+    }
+    
+    func startSession(for projectId: UUID) {
+        if activeSession != nil { stopSession() }
+        activeSession = Session(projectId: projectId)
+        selectedProjectId = projectId
+        saveActiveSession()
+        startTimers()
+        updateHeartbeat()
+    }
+    
+    func stopSession() {
+        guard var session = activeSession else { return }
+        session.endTime = Date()
+        sessions.insert(session, at: 0)
+        activeSession = nil
+        stopTimers()
+        clearHeartbeat()
+        saveData()
+    }
+    
+    func toggleSession(for projectId: UUID) {
+        if activeSession?.projectId == projectId {
+            stopSession()
+        } else {
+            startSession(for: projectId)
+        }
+    }
+    
+    func addProject(name: String) {
+        projects.append(Project(name: name))
+        saveData()
+    }
+    
+    func deleteProject(id: UUID) {
+        if activeSession?.projectId == id {
+            activeSession = nil
+            stopTimers()
+            clearActiveSession()
+        }
+        projects.removeAll { $0.id == id }
+        sessions.removeAll { $0.projectId == id }
+        saveData()
+    }
+    
+    func resetProjectTime(id: UUID) {
+        if activeSession?.projectId == id {
+            activeSession = nil
+            stopTimers()
+            clearActiveSession()
+        }
+        sessions.removeAll { $0.projectId == id }
+        saveData()
+    }
+    
+    func adjustSession(_ session: Session, minutes: Double) {
+        if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+            sessions[index].manualAdjustment += (minutes * 60)
+            saveData()
+        }
+    }
+    
+    private func saveData() {
+        if let encoded = try? JSONEncoder().encode(projects) { UserDefaults.standard.set(encoded, forKey: projectsKey) }
+        if let encoded = try? JSONEncoder().encode(sessions) { UserDefaults.standard.set(encoded, forKey: sessionsKey) }
+    }
+    
+    private func loadData() {
+        if let data = UserDefaults.standard.data(forKey: projectsKey), let decoded = try? JSONDecoder().decode([Project].self, from: data) { projects = decoded }
+        if let data = UserDefaults.standard.data(forKey: sessionsKey), let decoded = try? JSONDecoder().decode([Session].self, from: data) { sessions = decoded }
+        if let data = UserDefaults.standard.data(forKey: activeSessionKey), let decoded = try? JSONDecoder().decode(Session.self, from: data) {
+            activeSession = decoded
+            selectedProjectId = decoded.projectId
+        }
+    }
+    
+    private func saveActiveSession() {
+        if let encoded = try? JSONEncoder().encode(activeSession) { UserDefaults.standard.set(encoded, forKey: activeSessionKey) }
+    }
+    
+    private func clearActiveSession() { UserDefaults.standard.removeObject(forKey: activeSessionKey) }
+    
+    private func startTimers() {
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.objectWillChange.send() }
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: heartbeatInterval, repeats: true) { [weak self] _ in self?.updateHeartbeat() }
+    }
+    
+    private func stopTimers() { timer?.invalidate(); heartbeatTimer?.invalidate(); timer = nil; heartbeatTimer = nil }
+    private func updateHeartbeat() { UserDefaults.standard.set(Date(), forKey: lastHeartbeatKey) }
+    private func clearHeartbeat() { UserDefaults.standard.removeObject(forKey: lastHeartbeatKey); clearActiveSession() }
+    
+    private func checkForInterruptedSession() {
+        guard let lastHeartbeat = UserDefaults.standard.object(forKey: lastHeartbeatKey) as? Date, let active = activeSession else { return }
+        if Date().timeIntervalSince(lastHeartbeat) > gapThreshold {
+            var concluded = active
+            concluded.endTime = lastHeartbeat
+            sessions.insert(concluded, at: 0)
+            activeSession = nil
+            clearHeartbeat()
+            saveData()
+            sendNotification(title: "Session Concluded", body: "Tally recovered a session.")
+        }
+    }
+    
+    private func startIdleCheck() { idleCheckTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.checkIdleTime() } }
+    
+    private func checkIdleTime() {
+        guard activeSession != nil else { return }
+        if let idleSeconds = getSystemIdleTime(), idleSeconds > idleThreshold {
+            sendNotification(title: "Idle Detected", body: "Paused due to inactivity.")
+            stopSession()
+        }
+    }
+    
+    private func getSystemIdleTime() -> Double? {
+        var iterator: io_iterator_t = 0
+        let result = IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOHIDSystem"), &iterator)
+        guard result == KERN_SUCCESS else { return nil }
+        defer { IOObjectRelease(iterator) }
+        let entry = IOIteratorNext(iterator)
+        guard entry != 0 else { return nil }
+        defer { IOObjectRelease(entry) }
+        var unmanagedDict: Unmanaged<CFMutableDictionary>?
+        if IORegistryEntryCreateCFProperties(entry, &unmanagedDict, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+           let dict = unmanagedDict?.takeRetainedValue() as? [String: Any],
+           let idleTimeNano = dict["HIDIdleTime"] as? Int64 {
+            return Double(idleTimeNano) / Double(NSEC_PER_SEC)
+        }
+        return nil
+    }
+    
+    func projectName(for id: UUID) -> String { projects.first(where: { $0.id == id })?.name ?? "Unknown" }
+    
+    func totalTime(for projectId: UUID) -> TimeInterval {
+        let completedTotal = sessions
+            .filter { $0.projectId == projectId }
+            .reduce(0) { $0 + $1.duration }
+        if let active = activeSession, active.projectId == projectId { return completedTotal + active.duration }
+        return completedTotal
+    }
+
+    func formatDuration(_ duration: TimeInterval) -> String {
+        let h = Int(duration) / 3600, m = (Int(duration) % 3600) / 60, s = Int(duration) % 60
+        return String(format: "%02d:%02d:%02d", h, m, s)
+    }
+    
+    func copyToClipboard(session: Session) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(formatDuration(session.duration), forType: .string)
+    }
+    
+    private func requestNotificationPermission() { UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in } }
+    private func sendNotification(title: String, body: String) {
+        let content = UNMutableNotificationContent(); content.title = title; content.body = body
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+}
+
+// MARK: - Views
+
+struct RootView: View {
+    @ObservedObject var manager: TrackerManager
+    
+    var body: some View {
+        NavigationStack {
+            MainView(manager: manager)
+        }
+        .frame(width: 320)
+        .tallyTheme()
+    }
+}
+
+struct MainView: View {
+    @ObservedObject var manager: TrackerManager
+    @State private var newProjectName = ""
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider().overlay(Color.primary.opacity(0.1))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    projectSection
+                }
+                .padding()
+            }
+            Divider().overlay(Color.primary.opacity(0.1))
+            footer
+        }
+        .frame(height: 320)
+        .tallyTheme()
+    }
+    
+    private var header: some View {
+        HStack {
+            Image(systemName: "timer").font(.title2)
+            Text("Tally").font(.headline)
+            Spacer()
+            if let active = manager.activeSession {
+                Text(manager.formatDuration(manager.totalTime(for: active.projectId))).monospaced().bold()
+            }
+            NavigationLink(destination: SettingsView(manager: manager)) {
+                Image(systemName: "gearshape").font(.body)
+            }.buttonStyle(TallyButtonStyle()).padding(.leading, 8)
+        }.padding()
+    }
+    
+    private var projectSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Projects", systemImage: "briefcase").font(.caption).foregroundStyle(.secondary)
+            ForEach(manager.projects) { project in
+                HStack {
+                    Text(project.name).fontWeight(manager.activeSession?.projectId == project.id ? .bold : .regular)
+                    Spacer()
+                    Text(manager.formatDuration(manager.totalTime(for: project.id))).monospaced().font(.caption).foregroundStyle(.secondary)
+                    Button(action: { manager.toggleSession(for: project.id) }) {
+                        Image(systemName: manager.activeSession?.projectId == project.id ? "stop.fill" : "play.fill")
+                    }.buttonStyle(TallyButtonStyle())
+                }.padding(8).background(Color.primary.opacity(0.05)).cornerRadius(6)
+            }
+            
+            HStack {
+                TextField("New Project", text: $newProjectName)
+                    .textFieldStyle(.plain)
+                    .onSubmit { if !newProjectName.isEmpty { manager.addProject(name: newProjectName); newProjectName = "" } }
+                
+                Spacer()
+                
+                Button(action: { if !newProjectName.isEmpty { manager.addProject(name: newProjectName); newProjectName = "" } }) {
+                    Image(systemName: "plus")
+                }
+                .disabled(newProjectName.isEmpty)
+                .buttonStyle(TallyButtonStyle())
+            }
+            .padding(8)
+            .background(Color.primary.opacity(0.05))
+            .cornerRadius(6)
+        }
+    }
+    
+    private var footer: some View {
+        HStack {
+            QuitButton()
+            Spacer()
+            Text("v1.0.0").font(.caption2).opacity(0.5)
+        }.padding(.horizontal).padding(.vertical, 8)
+    }
+}
+
+struct QuitButton: View {
+    @State private var isHovering = false
+    
+    var body: some View {
+        Button(action: { NSApplication.shared.terminate(nil) }) {
+            Text("Quit")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .underline(isHovering)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.1)) {
+                isHovering = hovering
+            }
+        }
+    }
+}
+
+struct SettingsView: View {
+    @ObservedObject var manager: TrackerManager
+    @Environment(\.dismiss) var dismiss
+    
+    @State private var projectToReset: Project?
+    @State private var projectToDelete: Project?
+    
+    var body: some View {
+        ZStack {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Settings").font(.headline)
+                    Spacer()
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "chevron.left")
+                    }.buttonStyle(TallyButtonStyle())
+                }.padding()
+                
+                Divider().overlay(Color.primary.opacity(0.1))
+                
+                ScrollView {
+                    VStack(spacing: 16) {
+                        NavigationLink(destination: HistoryView(manager: manager)) {
+                            HStack {
+                                Label("View Session History", systemImage: "clock.arrow.circlepath")
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption)
+                            }
+                            .padding(12)
+                            .background(Color.primary.opacity(0.05))
+                            .cornerRadius(8)
+                        }.buttonStyle(TallyButtonStyle())
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Manage Projects").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 4)
+                            
+                            ForEach(manager.projects) { project in
+                                HStack {
+                                    Text(project.name).font(.subheadline)
+                                    Spacer()
+                                    HStack(spacing: 16) {
+                                        Button(action: { projectToReset = project }) {
+                                            Image(systemName: "arrow.counterclockwise")
+                                        }.buttonStyle(TallyButtonStyle())
+                                        
+                                        Button(action: { projectToDelete = project }) {
+                                            Image(systemName: "trash")
+                                        }.buttonStyle(TallyButtonStyle())
+                                    }
+                                }
+                                .padding(10)
+                                .background(Color.primary.opacity(0.05))
+                                .cornerRadius(8)
+                            }
+                        }
+                    }.padding()
+                }
+            }
+            
+            // Custom Confirmation Overlays
+            if projectToReset != nil || projectToDelete != nil {
+                Color.black.opacity(0.4)
+                    .edgesIgnoringSafeArea(.all)
+                
+                VStack(spacing: 16) {
+                    Text(projectToReset != nil ? "Reset Project Time?" : "Delete Project?")
+                        .font(.headline)
+                    
+                    Text(projectToReset != nil ? 
+                         "Are you sure you want to reset all recorded time for '\(projectToReset?.name ?? "")'? This cannot be undone." :
+                         "Are you sure you want to delete '\(projectToDelete?.name ?? "")'? This will remove all history and cannot be undone.")
+                        .font(.caption)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                    
+                    HStack(spacing: 20) {
+                        Button("Cancel") {
+                            withAnimation {
+                                projectToReset = nil
+                                projectToDelete = nil
+                            }
+                        }.buttonStyle(TallyButtonStyle())
+                        
+                        Button(projectToReset != nil ? "Reset" : "Delete") {
+                            withAnimation {
+                                if let p = projectToReset {
+                                    manager.resetProjectTime(id: p.id)
+                                    projectToReset = nil
+                                } else if let p = projectToDelete {
+                                    manager.deleteProject(id: p.id)
+                                    projectToDelete = nil
+                                }
+                            }
+                        }.buttonStyle(TallyButtonStyle()).fontWeight(.bold)
+                    }
+                }
+                .padding()
+                .frame(width: 260)
+                .tallyTheme()
+                .cornerRadius(12)
+                .shadow(radius: 10)
+            }
+        }
+        .frame(width: 320, height: 400)
+        .tallyTheme()
+        .navigationBarBackButtonHidden(true)
+    }
+}
+
+struct HistoryView: View {
+    @ObservedObject var manager: TrackerManager
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Session History").font(.headline)
+                Spacer()
+                Button(action: { dismiss() }) {
+                    Image(systemName: "chevron.left")
+                }.buttonStyle(TallyButtonStyle())
+            }.padding()
+            
+            Divider().overlay(Color.primary.opacity(0.1))
+            
+            ScrollView {
+                VStack(spacing: 8) {
+                    if manager.sessions.isEmpty {
+                        Text("No recorded sessions.").foregroundStyle(.secondary).padding()
+                    }
+                    
+                    ForEach(manager.sessions) { session in
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(manager.projectName(for: session.projectId)).font(.subheadline).fontWeight(.medium)
+                                Text(session.startTime.formatted(date: .omitted, time: .shortened)).font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            HStack(spacing: 8) {
+                                Button("-") { manager.adjustSession(session, minutes: -5) }.buttonStyle(TallyButtonStyle())
+                                Text(manager.formatDuration(session.duration)).monospaced().onTapGesture { manager.copyToClipboard(session: session) }
+                                Button("+") { manager.adjustSession(session, minutes: 5) }.buttonStyle(TallyButtonStyle())
+                            }
+                        }.padding(8).background(Color.primary.opacity(0.05)).cornerRadius(6)
+                    }
+                }.padding()
+            }
+        }
+        .frame(width: 320, height: 400)
+        .tallyTheme()
+        .navigationBarBackButtonHidden(true)
+    }
+}
+
+// MARK: - App
+
+@main
+struct TallyApp: App {
+    @StateObject private var manager = TrackerManager()
+    
+    var body: some Scene {
+        MenuBarExtra {
+            RootView(manager: manager)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "timer")
+                if let active = manager.activeSession {
+                    Text(manager.formatDuration(manager.totalTime(for: active.projectId))).monospaced()
+                }
+            }
+        }
+        .menuBarExtraStyle(.window)
+    }
+}
