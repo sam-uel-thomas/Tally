@@ -3,6 +3,7 @@ import SwiftUI
 import IOKit
 import UserNotifications
 import AppKit
+import ServiceManagement
 
 // MARK: - Theme
 
@@ -84,6 +85,7 @@ final class TrackerManager: ObservableObject {
     @Published var sessions: [Session] = []
     @Published var activeSession: Session?
     @Published var selectedProjectId: UUID?
+    @Published var launchAtLogin: Bool = false
     
     private var timer: Timer?
     private var heartbeatTimer: Timer?
@@ -100,10 +102,29 @@ final class TrackerManager: ObservableObject {
     
     init() {
         loadData()
+        refreshLaunchStatus()
         requestNotificationPermission()
         checkForInterruptedSession()
         startIdleCheck()
         if activeSession != nil { startTimers() }
+    }
+    
+    func refreshLaunchStatus() {
+        launchAtLogin = (SMAppService.mainApp.status == .enabled)
+    }
+    
+    func toggleLaunchAtLogin() {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .enabled {
+                try service.unregister()
+            } else {
+                try service.register()
+            }
+            refreshLaunchStatus()
+        } catch {
+            print("Failed to update launch status: \(error)")
+        }
     }
     
     func startSession(for projectId: UUID) {
@@ -394,6 +415,18 @@ struct SettingsView: View {
                 
                 ScrollView {
                     VStack(spacing: 16) {
+                        // Launch at Login Toggle
+                        Button(action: { manager.toggleLaunchAtLogin() }) {
+                            HStack {
+                                Label("Open on Launch", systemImage: manager.launchAtLogin ? "checkmark.circle.fill" : "circle")
+                                Spacer()
+                                Text(manager.launchAtLogin ? "On" : "Off").font(.caption).foregroundStyle(.secondary)
+                            }
+                            .padding(12)
+                            .background(Color.primary.opacity(0.05))
+                            .cornerRadius(8)
+                        }.buttonStyle(TallyButtonStyle())
+
                         NavigationLink(destination: HistoryView(manager: manager)) {
                             HStack {
                                 Label("View Session History", systemImage: "clock.arrow.circlepath")
@@ -478,6 +511,9 @@ struct SettingsView: View {
         .frame(width: 320, height: 400)
         .tallyTheme()
         .navigationBarBackButtonHidden(true)
+        .onAppear {
+            manager.refreshLaunchStatus()
+        }
     }
 }
 
