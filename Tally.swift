@@ -20,18 +20,17 @@ struct TallyTheme: ViewModifier {
     @ObservedObject var manager: TrackerManager
     @Environment(\.colorScheme) var systemColorScheme
     
-    var colorScheme: ColorScheme {
+    var isDark: Bool {
         switch manager.appTheme {
-        case .system: return systemColorScheme
-        case .light: return .light
-        case .dark: return .dark
+        case .system: return systemColorScheme == .dark
+        case .light: return false
+        case .dark: return true
         }
     }
     
-    var background: Color { colorScheme == .dark ? .tallyDark : .tallyLight }
-    var foreground: Color { colorScheme == .dark ? .tallyLight : .tallyDark }
-    var secondaryBackground: Color { foreground.opacity(0.08) }
-    var tertiaryBackground: Color { foreground.opacity(0.04) }
+    var colorScheme: ColorScheme { isDark ? .dark : .light }
+    var background: Color { isDark ? .tallyDark : .tallyLight }
+    var foreground: Color { isDark ? .tallyLight : .tallyDark }
     
     func body(content: Content) -> some View {
         content
@@ -319,14 +318,37 @@ final class TrackerManager: ObservableObject {
         let content = UNMutableNotificationContent(); content.title = title; content.body = body
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
+    
+    func isThemeDark(system: ColorScheme) -> Bool {
+        switch appTheme {
+        case .system: return system == .dark
+        case .light: return false
+        case .dark: return true
+        }
+    }
+    
+    func foreground(system: ColorScheme, opacity: Double = 1.0) -> Color {
+        let dark = isThemeDark(system: system)
+        return (dark ? Color.tallyLight : Color.tallyDark).opacity(opacity)
+    }
+    
+    func boxBackground(system: ColorScheme) -> Color {
+        let dark = isThemeDark(system: system)
+        // In light mode (dark foreground), we want a darker "grey" for boxes (0.12 opacity)
+        // In dark mode (light foreground), we keep it subtle (0.05 opacity)
+        return dark ? Color.tallyLight.opacity(0.05) : Color.tallyDark.opacity(0.12)
+    }
 }
 
 // MARK: - Components
 
 struct TallyFooter: View {
+    @ObservedObject var manager: TrackerManager
+    @Environment(\.colorScheme) var systemColorScheme
+    
     var body: some View {
         HStack {
-            QuitButton()
+            QuitButton(manager: manager)
             Spacer()
             Text("v1.0.0").font(.caption2).opacity(0.4)
         }.padding(.horizontal).padding(.vertical, 8)
@@ -334,6 +356,8 @@ struct TallyFooter: View {
 }
 
 struct QuitButton: View {
+    @ObservedObject var manager: TrackerManager
+    @Environment(\.colorScheme) var systemColorScheme
     @State private var isHovering = false
     
     var body: some View {
@@ -368,22 +392,21 @@ struct RootView: View {
 
 struct MainView: View {
     @ObservedObject var manager: TrackerManager
+    @Environment(\.colorScheme) var systemColorScheme
     @State private var newProjectName = ""
-    
-    var theme: TallyTheme { TallyTheme(manager: manager) }
     
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(manager.foreground(opacity: 0.1))
+            Divider().overlay(manager.foreground(system: systemColorScheme, opacity: 0.1))
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     projectSection
                 }
                 .padding()
             }
-            Divider().overlay(manager.foreground(opacity: 0.1))
-            TallyFooter()
+            Divider().overlay(manager.foreground(system: systemColorScheme, opacity: 0.1))
+            TallyFooter(manager: manager)
         }
         .frame(height: 320)
         .tallyTheme(manager: manager)
@@ -414,13 +437,20 @@ struct MainView: View {
                     Button(action: { manager.toggleSession(for: project.id) }) {
                         Image(systemName: manager.activeSession?.projectId == project.id ? "stop.fill" : "play.fill")
                     }.buttonStyle(TallyButtonStyle())
-                }.padding(8).background(manager.foreground(opacity: 0.05)).cornerRadius(6)
+                }.padding(8).background(manager.boxBackground(system: systemColorScheme)).cornerRadius(6)
             }
             
             HStack {
-                TextField("New Project", text: $newProjectName)
-                    .textFieldStyle(.plain)
-                    .onSubmit { if !newProjectName.isEmpty { manager.addProject(name: newProjectName); newProjectName = "" } }
+                ZStack(alignment: .leading) {
+                    if newProjectName.isEmpty {
+                        Text("New Project")
+                            .opacity(0.4)
+                            .padding(.leading, 4)
+                    }
+                    TextField("", text: $newProjectName)
+                        .textFieldStyle(.plain)
+                        .onSubmit { if !newProjectName.isEmpty { manager.addProject(name: newProjectName); newProjectName = "" } }
+                }
                 
                 Spacer()
                 
@@ -431,7 +461,7 @@ struct MainView: View {
                 .buttonStyle(TallyButtonStyle())
             }
             .padding(8)
-            .background(manager.foreground(opacity: 0.05))
+            .background(manager.boxBackground(system: systemColorScheme))
             .cornerRadius(6)
         }
     }
@@ -439,6 +469,7 @@ struct MainView: View {
 
 struct SettingsView: View {
     @ObservedObject var manager: TrackerManager
+    @Environment(\.colorScheme) var systemColorScheme
     @Environment(\.dismiss) var dismiss
     
     @State private var projectToReset: Project?
@@ -457,7 +488,7 @@ struct SettingsView: View {
                     }.buttonStyle(TallyButtonStyle())
                 }.padding()
                 
-                Divider().overlay(manager.foreground(opacity: 0.1))
+                Divider().overlay(manager.foreground(system: systemColorScheme, opacity: 0.1))
                 
                 ScrollView {
                     VStack(spacing: 16) {
@@ -473,7 +504,7 @@ struct SettingsView: View {
                                             .font(.caption2)
                                             .frame(maxWidth: .infinity)
                                             .padding(.vertical, 6)
-                                            .background(manager.appTheme == theme ? manager.foreground(opacity: 0.15) : manager.foreground(opacity: 0.05))
+                                            .background(manager.appTheme == theme ? manager.foreground(system: systemColorScheme, opacity: 0.15) : manager.foreground(system: systemColorScheme, opacity: 0.05))
                                             .cornerRadius(6)
                                     }.buttonStyle(.plain)
                                 }
@@ -489,7 +520,7 @@ struct SettingsView: View {
                                 Text(manager.launchAtLogin ? "On" : "Off").font(.caption).opacity(0.6)
                             }
                             .padding(12)
-                            .background(manager.foreground(opacity: 0.05))
+                            .background(manager.boxBackground(system: systemColorScheme))
                             .cornerRadius(8)
                         }.buttonStyle(TallyButtonStyle())
 
@@ -505,7 +536,7 @@ struct SettingsView: View {
                                             .font(.caption2)
                                             .frame(maxWidth: .infinity)
                                             .padding(.vertical, 6)
-                                            .background(manager.idleThreshold == mins * 60 ? manager.foreground(opacity: 0.15) : manager.foreground(opacity: 0.05))
+                                            .background(manager.idleThreshold == mins * 60 ? manager.foreground(system: systemColorScheme, opacity: 0.15) : manager.foreground(system: systemColorScheme, opacity: 0.05))
                                             .cornerRadius(6)
                                     }.buttonStyle(.plain)
                                 }
@@ -520,7 +551,7 @@ struct SettingsView: View {
                                 Image(systemName: "chevron.right").font(.caption)
                             }
                             .padding(12)
-                            .background(manager.foreground(opacity: 0.05))
+                            .background(manager.boxBackground(system: systemColorScheme))
                             .cornerRadius(8)
                         }.buttonStyle(TallyButtonStyle())
                         
@@ -542,15 +573,15 @@ struct SettingsView: View {
                                     }
                                 }
                                 .padding(10)
-                                .background(manager.foreground(opacity: 0.05))
+                                .background(manager.boxBackground(system: systemColorScheme))
                                 .cornerRadius(8)
                             }
                         }
                     }.padding()
                 }
                 
-                Divider().overlay(manager.foreground(opacity: 0.1))
-                TallyFooter()
+                Divider().overlay(manager.foreground(system: systemColorScheme, opacity: 0.1))
+                TallyFooter(manager: manager)
             }
             
             // Custom Confirmation Overlays
@@ -608,6 +639,7 @@ struct SettingsView: View {
 
 struct HistoryView: View {
     @ObservedObject var manager: TrackerManager
+    @Environment(\.colorScheme) var systemColorScheme
     @Environment(\.dismiss) var dismiss
     
     @State private var sessionToDelete: Session?
@@ -624,7 +656,7 @@ struct HistoryView: View {
                     }.buttonStyle(TallyButtonStyle())
                 }.padding()
                 
-                Divider().overlay(manager.foreground(opacity: 0.1))
+                Divider().overlay(manager.foreground(system: systemColorScheme, opacity: 0.1))
                 
                 ScrollView {
                     VStack(spacing: 8) {
@@ -638,7 +670,7 @@ struct HistoryView: View {
                                     Spacer()
                                 }
                                 .padding(10)
-                                .background(manager.foreground(opacity: 0.05))
+                                .background(manager.boxBackground(system: systemColorScheme))
                                 .cornerRadius(8)
                             }.buttonStyle(TallyButtonStyle())
                             .padding(.bottom, 8)
@@ -659,14 +691,14 @@ struct HistoryView: View {
                                             Image(systemName: "trash").font(.caption)
                                         }.buttonStyle(TallyButtonStyle())
                                     }
-                                }.padding(8).background(manager.foreground(opacity: 0.05)).cornerRadius(6)
+                                }.padding(8).background(manager.boxBackground(system: systemColorScheme)).cornerRadius(6)
                             }
                         }
                     }.padding()
                 }
                 
-                Divider().overlay(manager.foreground(opacity: 0.1))
-                TallyFooter()
+                Divider().overlay(manager.foreground(system: systemColorScheme, opacity: 0.1))
+                TallyFooter(manager: manager)
             }
             
             // Confirmation Overlays
@@ -716,16 +748,6 @@ struct HistoryView: View {
         .frame(width: 320, height: 400)
         .tallyTheme(manager: manager)
         .navigationBarBackButtonHidden(true)
-    }
-}
-
-// MARK: - Extension
-
-extension TrackerManager {
-    func foreground(opacity: Double = 1.0) -> Color {
-        let isDark = (appTheme == .dark) || (appTheme == .system && NSApp.effectiveAppearance.name == .darkAqua)
-        let base = isDark ? Color.tallyLight : Color.tallyDark
-        return base.opacity(opacity)
     }
 }
 
