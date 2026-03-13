@@ -86,19 +86,20 @@ final class TrackerManager: ObservableObject {
     @Published var activeSession: Session?
     @Published var selectedProjectId: UUID?
     @Published var launchAtLogin: Bool = false
+    @Published var idleThreshold: TimeInterval = 300 // default 5 mins
     
     private var timer: Timer?
     private var heartbeatTimer: Timer?
     private var idleCheckTimer: Timer?
     
     private let heartbeatInterval: TimeInterval = 30
-    private let idleThreshold: TimeInterval = 300 
     private let gapThreshold: TimeInterval = 300 
     
     private let projectsKey = "tally_projects"
     private let sessionsKey = "tally_sessions"
     private let activeSessionKey = "tally_active_session"
     private let lastHeartbeatKey = "tally_last_heartbeat"
+    private let idleThresholdKey = "tally_idle_threshold"
     
     init() {
         loadData()
@@ -125,6 +126,11 @@ final class TrackerManager: ObservableObject {
         } catch {
             print("Failed to update launch status: \(error)")
         }
+    }
+    
+    func setIdleThreshold(_ minutes: Double) {
+        idleThreshold = minutes * 60
+        UserDefaults.standard.set(idleThreshold, forKey: idleThresholdKey)
     }
     
     func startSession(for projectId: UUID) {
@@ -198,6 +204,10 @@ final class TrackerManager: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: activeSessionKey), let decoded = try? JSONDecoder().decode(Session.self, from: data) {
             activeSession = decoded
             selectedProjectId = decoded.projectId
+        }
+        let savedIdle = UserDefaults.standard.double(forKey: idleThresholdKey)
+        if savedIdle > 0 {
+            idleThreshold = savedIdle
         }
     }
     
@@ -400,6 +410,8 @@ struct SettingsView: View {
     @State private var projectToReset: Project?
     @State private var projectToDelete: Project?
     
+    let timeoutOptions: [Double] = [1, 2, 5, 10, 15, 30]
+    
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
@@ -426,6 +438,28 @@ struct SettingsView: View {
                             .background(Color.primary.opacity(0.05))
                             .cornerRadius(8)
                         }.buttonStyle(TallyButtonStyle())
+
+                        // Timeout Cooldown Selection
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Idle Timeout", systemImage: "clock.badge.exclamationmark")
+                                .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 4)
+                            
+                            HStack(spacing: 8) {
+                                ForEach(timeoutOptions, id: \.self) { mins in
+                                    Button(action: { manager.setIdleThreshold(mins) }) {
+                                        Text("\(Int(mins))m")
+                                            .font(.caption2)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(manager.idleThreshold == mins * 60 ? Color.primary.opacity(0.2) : Color.primary.opacity(0.05))
+                                            .cornerRadius(4)
+                                    }.buttonStyle(.plain)
+                                }
+                            }
+                            .padding(8)
+                            .background(Color.primary.opacity(0.02))
+                            .cornerRadius(8)
+                        }
 
                         NavigationLink(destination: HistoryView(manager: manager)) {
                             HStack {
