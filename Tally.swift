@@ -148,7 +148,7 @@ final class TrackerManager: ObservableObject {
         sessions.insert(session, at: 0)
         activeSession = nil
         stopTimers()
-        clearHeartbeat()
+        clearActiveSession()
         saveData()
     }
     
@@ -183,6 +183,16 @@ final class TrackerManager: ObservableObject {
             clearActiveSession()
         }
         sessions.removeAll { $0.projectId == id }
+        saveData()
+    }
+    
+    func deleteSession(id: UUID) {
+        sessions.removeAll { $0.id == id }
+        saveData()
+    }
+    
+    func deleteAllSessions() {
+        sessions.removeAll()
         saveData()
     }
     
@@ -555,39 +565,106 @@ struct HistoryView: View {
     @ObservedObject var manager: TrackerManager
     @Environment(\.dismiss) var dismiss
     
+    @State private var sessionToDelete: Session?
+    @State private var showDeleteAllConfirmation = false
+    
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Session History").font(.headline)
-                Spacer()
-                Button(action: { dismiss() }) {
-                    Image(systemName: "chevron.left")
-                }.buttonStyle(TallyButtonStyle())
-            }.padding()
-            
-            Divider().overlay(Color.primary.opacity(0.1))
-            
-            ScrollView {
-                VStack(spacing: 8) {
-                    if manager.sessions.isEmpty {
-                        Text("No recorded sessions.").foregroundStyle(.secondary).padding()
-                    }
-                    
-                    ForEach(manager.sessions) { session in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(manager.projectName(for: session.projectId)).font(.subheadline).fontWeight(.medium)
-                                Text(session.startTime.formatted(date: .omitted, time: .shortened)).font(.caption2).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            HStack(spacing: 8) {
-                                Button("-") { manager.adjustSession(session, minutes: -5) }.buttonStyle(TallyButtonStyle())
-                                Text(manager.formatDuration(session.duration)).monospaced().onTapGesture { manager.copyToClipboard(session: session) }
-                                Button("+") { manager.adjustSession(session, minutes: 5) }.buttonStyle(TallyButtonStyle())
-                            }
-                        }.padding(8).background(Color.primary.opacity(0.05)).cornerRadius(6)
-                    }
+        ZStack {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Session History").font(.headline)
+                    Spacer()
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "chevron.left")
+                    }.buttonStyle(TallyButtonStyle())
                 }.padding()
+                
+                Divider().overlay(Color.primary.opacity(0.1))
+                
+                ScrollView {
+                    VStack(spacing: 8) {
+                        if manager.sessions.isEmpty {
+                            Text("No recorded sessions.").foregroundStyle(.secondary).padding()
+                        } else {
+                            // Delete All Button
+                            Button(action: { showDeleteAllConfirmation = true }) {
+                                HStack {
+                                    Label("Delete All History", systemImage: "trash")
+                                    Spacer()
+                                }
+                                .padding(10)
+                                .background(Color.primary.opacity(0.05))
+                                .cornerRadius(8)
+                            }.buttonStyle(TallyButtonStyle())
+                            .padding(.bottom, 8)
+                            
+                            ForEach(manager.sessions) { session in
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(manager.projectName(for: session.projectId)).font(.subheadline).fontWeight(.medium)
+                                        Text(session.startTime.formatted(date: .omitted, time: .shortened)).font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    HStack(spacing: 8) {
+                                        Button("-") { manager.adjustSession(session, minutes: -5) }.buttonStyle(TallyButtonStyle())
+                                        Text(manager.formatDuration(session.duration)).monospaced().onTapGesture { manager.copyToClipboard(session: session) }
+                                        Button("+") { manager.adjustSession(session, minutes: 5) }.buttonStyle(TallyButtonStyle())
+                                        
+                                        Divider().frame(height: 12).padding(.horizontal, 4)
+                                        
+                                        Button(action: { sessionToDelete = session }) {
+                                            Image(systemName: "trash").font(.caption)
+                                        }.buttonStyle(TallyButtonStyle())
+                                    }
+                                }.padding(8).background(Color.primary.opacity(0.05)).cornerRadius(6)
+                            }
+                        }
+                    }.padding()
+                }
+            }
+            
+            // Confirmation Overlays
+            if sessionToDelete != nil || showDeleteAllConfirmation {
+                Color.black.opacity(0.4)
+                    .edgesIgnoringSafeArea(.all)
+                
+                VStack(spacing: 16) {
+                    Text(showDeleteAllConfirmation ? "Delete All History?" : "Delete Session?")
+                        .font(.headline)
+                    
+                    Text(showDeleteAllConfirmation ? 
+                         "Are you sure you want to clear ALL session history? This cannot be undone." :
+                         "Are you sure you want to delete this session? This will update the project total.")
+                        .font(.caption)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                    
+                    HStack(spacing: 20) {
+                        Button("Cancel") {
+                            withAnimation {
+                                sessionToDelete = nil
+                                showDeleteAllConfirmation = false
+                            }
+                        }.buttonStyle(TallyButtonStyle())
+                        
+                        Button("Delete") {
+                            withAnimation {
+                                if showDeleteAllConfirmation {
+                                    manager.deleteAllSessions()
+                                    showDeleteAllConfirmation = false
+                                } else if let s = sessionToDelete {
+                                    manager.deleteSession(id: s.id)
+                                    sessionToDelete = nil
+                                }
+                            }
+                        }.buttonStyle(TallyButtonStyle()).fontWeight(.bold)
+                    }
+                }
+                .padding()
+                .frame(width: 260)
+                .tallyTheme()
+                .cornerRadius(12)
+                .shadow(radius: 10)
             }
         }
         .frame(width: 320, height: 400)
