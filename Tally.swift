@@ -65,10 +65,12 @@ extension View {
 struct Project: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
+    var manualAdjustment: TimeInterval = 0
     
-    init(id: UUID = UUID(), name: String) {
+    init(id: UUID = UUID(), name: String, manualAdjustment: TimeInterval = 0) {
         self.id = id
         self.name = name
+        self.manualAdjustment = manualAdjustment
     }
 }
 
@@ -202,8 +204,18 @@ final class TrackerManager: ObservableObject {
             stopTimers()
             clearActiveSession()
         }
+        if let idx = projects.firstIndex(where: { $0.id == id }) {
+            projects[idx].manualAdjustment = 0
+        }
         sessions.removeAll { $0.projectId == id }
         saveData()
+    }
+    
+    func adjustProjectTotal(id: UUID, delta: TimeInterval) {
+        if let idx = projects.firstIndex(where: { $0.id == id }) {
+            projects[idx].manualAdjustment += delta
+            saveData()
+        }
     }
     
     func deleteSession(id: UUID) {
@@ -295,11 +307,16 @@ final class TrackerManager: ObservableObject {
     func projectName(for id: UUID) -> String { projects.first(where: { $0.id == id })?.name ?? "Unknown" }
     
     func totalTime(for projectId: UUID) -> TimeInterval {
+        let project = projects.first(where: { $0.id == projectId })
         let completedTotal = sessions
             .filter { $0.projectId == projectId }
             .reduce(0) { $0 + $1.duration }
-        if let active = activeSession, active.projectId == projectId { return completedTotal + active.duration }
-        return completedTotal
+        
+        var total = completedTotal + (project?.manualAdjustment ?? 0)
+        if let active = activeSession, active.projectId == projectId {
+            total += active.duration
+        }
+        return max(0, total)
     }
 
     func formatDuration(_ duration: TimeInterval) -> String {
@@ -334,8 +351,6 @@ final class TrackerManager: ObservableObject {
     
     func boxBackground(system: ColorScheme) -> Color {
         let dark = isThemeDark(system: system)
-        // In light mode (dark foreground), we want a darker "grey" for boxes (0.12 opacity)
-        // In dark mode (light foreground), we keep it subtle (0.05 opacity)
         return dark ? Color.tallyLight.opacity(0.05) : Color.tallyDark.opacity(0.12)
     }
 }
@@ -474,6 +489,12 @@ struct SettingsView: View {
     
     @State private var projectToReset: Project?
     @State private var projectToDelete: Project?
+    @State private var projectToAdjust: Project?
+    
+    @State private var adjH = ""
+    @State private var adjM = ""
+    @State private var adjS = ""
+    @State private var isNegative = false
     
     let timeoutOptions: [Double] = [1, 2, 5, 10, 15, 30]
     
@@ -492,11 +513,10 @@ struct SettingsView: View {
                 
                 ScrollView {
                     VStack(spacing: 16) {
-                        // Appearance Selection
+                        // 1. Appearance
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Appearance", systemImage: "paintbrush")
                                 .font(.caption).opacity(0.6).padding(.horizontal, 4)
-                            
                             HStack(spacing: 8) {
                                 ForEach(AppTheme.allCases, id: \.self) { theme in
                                     Button(action: { manager.setTheme(theme) }) {
@@ -512,23 +532,10 @@ struct SettingsView: View {
                             .padding(4)
                         }
 
-                        // Launch at Login Toggle
-                        Button(action: { manager.toggleLaunchAtLogin() }) {
-                            HStack {
-                                Label("Open on Launch", systemImage: manager.launchAtLogin ? "checkmark.circle.fill" : "circle")
-                                Spacer()
-                                Text(manager.launchAtLogin ? "On" : "Off").font(.caption).opacity(0.6)
-                            }
-                            .padding(12)
-                            .background(manager.boxBackground(system: systemColorScheme))
-                            .cornerRadius(8)
-                        }.buttonStyle(TallyButtonStyle())
-
-                        // Timeout Cooldown Selection
+                        // 2. Idle Timeout
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Idle Timeout", systemImage: "clock.badge.exclamationmark")
                                 .font(.caption).opacity(0.6).padding(.horizontal, 4)
-                            
                             HStack(spacing: 8) {
                                 ForEach(timeoutOptions, id: \.self) { mins in
                                     Button(action: { manager.setIdleThreshold(mins) }) {
@@ -544,25 +551,45 @@ struct SettingsView: View {
                             .padding(4)
                         }
 
-                        NavigationLink(destination: HistoryView(manager: manager)) {
-                            HStack {
-                                Label("View Session History", systemImage: "clock.arrow.circlepath")
-                                Spacer()
-                                Image(systemName: "chevron.right").font(.caption)
-                            }
-                            .padding(12)
-                            .background(manager.boxBackground(system: systemColorScheme))
-                            .cornerRadius(8)
-                        }.buttonStyle(TallyButtonStyle())
-                        
+                        // 3. Open on Launch & 4. View Session History (Shrunk)
+                        HStack(spacing: 12) {
+                            Button(action: { manager.toggleLaunchAtLogin() }) {
+                                HStack {
+                                    Image(systemName: manager.launchAtLogin ? "checkmark.circle.fill" : "circle")
+                                    Text("Auto Launch").lineLimit(1)
+                                }
+                                .font(.caption2)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(manager.boxBackground(system: systemColorScheme))
+                                .cornerRadius(8)
+                            }.buttonStyle(TallyButtonStyle())
+
+                            NavigationLink(destination: HistoryView(manager: manager)) {
+                                HStack {
+                                    Image(systemName: "clock.arrow.circlepath")
+                                    Text("History").lineLimit(1)
+                                }
+                                .font(.caption2)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background(manager.boxBackground(system: systemColorScheme))
+                                .cornerRadius(8)
+                            }.buttonStyle(TallyButtonStyle())
+                        }
+
+                        // 5. Manage Projects
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Manage Projects").font(.caption).opacity(0.6).padding(.horizontal, 4)
-                            
                             ForEach(manager.projects) { project in
                                 HStack {
                                     Text(project.name).font(.subheadline)
                                     Spacer()
-                                    HStack(spacing: 16) {
+                                    HStack(spacing: 12) {
+                                        Button(action: { startAdjustment(for: project) }) {
+                                            Image(systemName: "ellipsis")
+                                        }.buttonStyle(TallyButtonStyle())
+                                        
                                         Button(action: { projectToReset = project }) {
                                             Image(systemName: "arrow.counterclockwise")
                                         }.buttonStyle(TallyButtonStyle())
@@ -585,54 +612,109 @@ struct SettingsView: View {
             }
             
             // Custom Confirmation Overlays
-            if projectToReset != nil || projectToDelete != nil {
+            if projectToReset != nil || projectToDelete != nil || projectToAdjust != nil {
                 Color.black.opacity(0.4)
                     .edgesIgnoringSafeArea(.all)
                 
-                VStack(spacing: 16) {
-                    Text(projectToReset != nil ? "Reset Project Time?" : "Delete Project?")
-                        .font(.headline)
-                    
-                    Text(projectToReset != nil ? 
-                         "Are you sure you want to reset all recorded time for '\(projectToReset?.name ?? "")'? This cannot be undone." :
-                         "Are you sure you want to delete '\(projectToDelete?.name ?? "")'? This will remove all history and cannot be undone.")
-                        .font(.caption)
-                        .multilineTextAlignment(.center)
-                        .opacity(0.6)
-                    
-                    HStack(spacing: 20) {
-                        Button("Cancel") {
-                            withAnimation {
-                                projectToReset = nil
-                                projectToDelete = nil
-                            }
-                        }.buttonStyle(TallyButtonStyle())
-                        
-                        Button(projectToReset != nil ? "Reset" : "Delete") {
-                            withAnimation {
-                                if let p = projectToReset {
-                                    manager.resetProjectTime(id: p.id)
-                                    projectToReset = nil
-                                } else if let p = projectToDelete {
-                                    manager.deleteProject(id: p.id)
-                                    projectToDelete = nil
+                if projectToAdjust != nil {
+                    adjustmentOverlay
+                } else {
+                    VStack(spacing: 16) {
+                        Text(projectToReset != nil ? "Reset Project Time?" : "Delete Project?")
+                            .font(.headline)
+                        Text(projectToReset != nil ? 
+                             "Are you sure you want to reset all recorded time for '\(projectToReset?.name ?? "")'? This cannot be undone." :
+                             "Are you sure you want to delete '\(projectToDelete?.name ?? "")'? This will remove all history and cannot be undone.")
+                            .font(.caption)
+                            .multilineTextAlignment(.center)
+                            .opacity(0.6)
+                        HStack(spacing: 20) {
+                            Button("Cancel") {
+                                withAnimation { projectToReset = nil; projectToDelete = nil }
+                            }.buttonStyle(TallyButtonStyle())
+                            Button(projectToReset != nil ? "Reset" : "Delete") {
+                                withAnimation {
+                                    if let p = projectToReset { manager.resetProjectTime(id: p.id); projectToReset = nil }
+                                    else if let p = projectToDelete { manager.deleteProject(id: p.id); projectToDelete = nil }
                                 }
-                            }
-                        }.buttonStyle(TallyButtonStyle()).fontWeight(.bold)
+                            }.buttonStyle(TallyButtonStyle()).fontWeight(.bold)
+                        }
                     }
+                    .padding()
+                    .frame(width: 260)
+                    .tallyTheme(manager: manager)
+                    .cornerRadius(12)
+                    .shadow(radius: 10)
                 }
-                .padding()
-                .frame(width: 260)
-                .tallyTheme(manager: manager)
-                .cornerRadius(12)
-                .shadow(radius: 10)
             }
         }
         .frame(width: 320, height: 400)
         .tallyTheme(manager: manager)
         .navigationBarBackButtonHidden(true)
-        .onAppear {
-            manager.refreshLaunchStatus()
+        .onAppear { manager.refreshLaunchStatus() }
+    }
+    
+    private var adjustmentOverlay: some View {
+        VStack(spacing: 16) {
+            Text("Adjust Time").font(.headline)
+            Text(projectToAdjust?.name ?? "").font(.caption).opacity(0.6)
+            
+            HStack(spacing: 12) {
+                Button(action: { isNegative.toggle() }) {
+                    Image(systemName: isNegative ? "minus.square.fill" : "plus.square.fill")
+                        .font(.title2)
+                }.buttonStyle(.plain)
+                
+                adjustmentField(value: $adjH, label: "H")
+                adjustmentField(value: $adjM, label: "M")
+                adjustmentField(value: $adjS, label: "S")
+            }
+            
+            HStack(spacing: 20) {
+                Button("Cancel") {
+                    withAnimation { projectToAdjust = nil }
+                }.buttonStyle(TallyButtonStyle())
+                
+                Button("Apply") {
+                    applyAdjustment()
+                }.buttonStyle(TallyButtonStyle()).fontWeight(.bold)
+            }
+        }
+        .padding()
+        .frame(width: 260)
+        .tallyTheme(manager: manager)
+        .cornerRadius(12)
+        .shadow(radius: 10)
+    }
+    
+    private func adjustmentField(value: Binding<String>, label: String) -> some View {
+        VStack(spacing: 4) {
+            TextField("0", text: value)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.center)
+                .frame(width: 40, height: 30)
+                .background(manager.foreground(system: systemColorScheme, opacity: 0.1))
+                .cornerRadius(4)
+            Text(label).font(.caption2).opacity(0.4)
+        }
+    }
+    
+    private func startAdjustment(for project: Project) {
+        projectToAdjust = project
+        adjH = ""; adjM = ""; adjS = ""; isNegative = false
+    }
+    
+    private func applyAdjustment() {
+        guard let p = projectToAdjust else { return }
+        let h = Double(adjH) ?? 0
+        let m = Double(adjM) ?? 0
+        let s = Double(adjS) ?? 0
+        let totalSeconds = (h * 3600) + (m * 60) + s
+        let delta = isNegative ? -totalSeconds : totalSeconds
+        
+        withAnimation {
+            manager.adjustProjectTotal(id: p.id, delta: delta)
+            projectToAdjust = nil
         }
     }
 }
@@ -663,7 +745,6 @@ struct HistoryView: View {
                         if manager.sessions.isEmpty {
                             Text("No recorded sessions.").opacity(0.6).padding()
                         } else {
-                            // Delete All Button
                             Button(action: { showDeleteAllConfirmation = true }) {
                                 HStack {
                                     Label("Delete All History", systemImage: "trash")
@@ -684,9 +765,7 @@ struct HistoryView: View {
                                     Spacer()
                                     HStack(spacing: 8) {
                                         Text(manager.formatDuration(session.duration)).monospaced().onTapGesture { manager.copyToClipboard(session: session) }
-                                        
                                         Divider().frame(height: 12).padding(.horizontal, 4)
-                                        
                                         Button(action: { sessionToDelete = session }) {
                                             Image(systemName: "trash").font(.caption)
                                         }.buttonStyle(TallyButtonStyle())
@@ -701,48 +780,24 @@ struct HistoryView: View {
                 TallyFooter(manager: manager)
             }
             
-            // Confirmation Overlays
             if sessionToDelete != nil || showDeleteAllConfirmation {
-                Color.black.opacity(0.4)
-                    .edgesIgnoringSafeArea(.all)
-                
+                Color.black.opacity(0.4).edgesIgnoringSafeArea(.all)
                 VStack(spacing: 16) {
                     Text(showDeleteAllConfirmation ? "Delete All History?" : "Delete Session?")
                         .font(.headline)
-                    
-                    Text(showDeleteAllConfirmation ? 
-                         "Are you sure you want to clear ALL session history? This cannot be undone." :
-                         "Are you sure you want to delete this session? This will update the project total.")
-                        .font(.caption)
-                        .multilineTextAlignment(.center)
-                        .opacity(0.6)
-                    
+                    Text(showDeleteAllConfirmation ? "Are you sure? This cannot be undone." : "Are you sure? This will update the project total.")
+                        .font(.caption).multilineTextAlignment(.center).opacity(0.6)
                     HStack(spacing: 20) {
-                        Button("Cancel") {
-                            withAnimation {
-                                sessionToDelete = nil
-                                showDeleteAllConfirmation = false
-                            }
-                        }.buttonStyle(TallyButtonStyle())
-                        
+                        Button("Cancel") { withAnimation { sessionToDelete = nil; showDeleteAllConfirmation = false } }.buttonStyle(TallyButtonStyle())
                         Button("Delete") {
                             withAnimation {
-                                if showDeleteAllConfirmation {
-                                    manager.deleteAllSessions()
-                                    showDeleteAllConfirmation = false
-                                } else if let s = sessionToDelete {
-                                    manager.deleteSession(id: s.id)
-                                    sessionToDelete = nil
-                                }
+                                if showDeleteAllConfirmation { manager.deleteAllSessions(); showDeleteAllConfirmation = false }
+                                else if let s = sessionToDelete { manager.deleteSession(id: s.id); sessionToDelete = nil }
                             }
                         }.buttonStyle(TallyButtonStyle()).fontWeight(.bold)
                     }
                 }
-                .padding()
-                .frame(width: 260)
-                .tallyTheme(manager: manager)
-                .cornerRadius(12)
-                .shadow(radius: 10)
+                .padding().frame(width: 260).tallyTheme(manager: manager).cornerRadius(12).shadow(radius: 10)
             }
         }
         .frame(width: 320, height: 400)
@@ -756,7 +811,6 @@ struct HistoryView: View {
 @main
 struct TallyApp: App {
     @StateObject private var manager = TrackerManager()
-    
     var body: some Scene {
         MenuBarExtra {
             RootView(manager: manager)
