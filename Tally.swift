@@ -30,6 +30,8 @@ struct TallyTheme: ViewModifier {
     
     var background: Color { colorScheme == .dark ? .tallyDark : .tallyLight }
     var foreground: Color { colorScheme == .dark ? .tallyLight : .tallyDark }
+    var secondaryBackground: Color { foreground.opacity(0.08) }
+    var tertiaryBackground: Color { foreground.opacity(0.04) }
     
     func body(content: Content) -> some View {
         content
@@ -326,7 +328,7 @@ struct TallyFooter: View {
         HStack {
             QuitButton()
             Spacer()
-            Text("v1.0.0").font(.caption2).opacity(0.5)
+            Text("v1.0.0").font(.caption2).opacity(0.4)
         }.padding(.horizontal).padding(.vertical, 8)
     }
 }
@@ -338,7 +340,7 @@ struct QuitButton: View {
         Button(action: { NSApplication.shared.terminate(nil) }) {
             Text("Quit")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .opacity(0.6)
                 .underline(isHovering)
         }
         .buttonStyle(.plain)
@@ -368,17 +370,19 @@ struct MainView: View {
     @ObservedObject var manager: TrackerManager
     @State private var newProjectName = ""
     
+    var theme: TallyTheme { TallyTheme(manager: manager) }
+    
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(Color.primary.opacity(0.1))
+            Divider().overlay(manager.foreground(opacity: 0.1))
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     projectSection
                 }
                 .padding()
             }
-            Divider().overlay(Color.primary.opacity(0.1))
+            Divider().overlay(manager.foreground(opacity: 0.1))
             TallyFooter()
         }
         .frame(height: 320)
@@ -401,16 +405,16 @@ struct MainView: View {
     
     private var projectSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Projects", systemImage: "briefcase").font(.caption).foregroundStyle(.secondary)
+            Label("Projects", systemImage: "briefcase").font(.caption).opacity(0.6)
             ForEach(manager.projects) { project in
                 HStack {
                     Text(project.name).fontWeight(manager.activeSession?.projectId == project.id ? .bold : .regular)
                     Spacer()
-                    Text(manager.formatDuration(manager.totalTime(for: project.id))).monospaced().font(.caption).foregroundStyle(.secondary)
+                    Text(manager.formatDuration(manager.totalTime(for: project.id))).monospaced().font(.caption).opacity(0.6)
                     Button(action: { manager.toggleSession(for: project.id) }) {
                         Image(systemName: manager.activeSession?.projectId == project.id ? "stop.fill" : "play.fill")
                     }.buttonStyle(TallyButtonStyle())
-                }.padding(8).background(Color.primary.opacity(0.05)).cornerRadius(6)
+                }.padding(8).background(manager.foreground(opacity: 0.05)).cornerRadius(6)
             }
             
             HStack {
@@ -427,7 +431,7 @@ struct MainView: View {
                 .buttonStyle(TallyButtonStyle())
             }
             .padding(8)
-            .background(Color.primary.opacity(0.05))
+            .background(manager.foreground(opacity: 0.05))
             .cornerRadius(6)
         }
     }
@@ -453,14 +457,14 @@ struct SettingsView: View {
                     }.buttonStyle(TallyButtonStyle())
                 }.padding()
                 
-                Divider().overlay(Color.primary.opacity(0.1))
+                Divider().overlay(manager.foreground(opacity: 0.1))
                 
                 ScrollView {
                     VStack(spacing: 16) {
                         // Appearance Selection
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Appearance", systemImage: "paintbrush")
-                                .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 4)
+                                .font(.caption).opacity(0.6).padding(.horizontal, 4)
                             
                             HStack(spacing: 8) {
                                 ForEach(AppTheme.allCases, id: \.self) { theme in
@@ -469,7 +473,7 @@ struct SettingsView: View {
                                             .font(.caption2)
                                             .frame(maxWidth: .infinity)
                                             .padding(.vertical, 6)
-                                            .background(manager.appTheme == theme ? Color.primary.opacity(0.15) : Color.primary.opacity(0.05))
+                                            .background(manager.appTheme == theme ? manager.foreground(opacity: 0.15) : manager.foreground(opacity: 0.05))
                                             .cornerRadius(6)
                                     }.buttonStyle(.plain)
                                 }
@@ -482,17 +486,17 @@ struct SettingsView: View {
                             HStack {
                                 Label("Open on Launch", systemImage: manager.launchAtLogin ? "checkmark.circle.fill" : "circle")
                                 Spacer()
-                                Text(manager.launchAtLogin ? "On" : "Off").font(.caption).foregroundStyle(.secondary)
+                                Text(manager.launchAtLogin ? "On" : "Off").font(.caption).opacity(0.6)
                             }
                             .padding(12)
-                            .background(Color.primary.opacity(0.05))
+                            .background(manager.foreground(opacity: 0.05))
                             .cornerRadius(8)
                         }.buttonStyle(TallyButtonStyle())
 
                         // Timeout Cooldown Selection
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Idle Timeout", systemImage: "clock.badge.exclamationmark")
-                                .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 4)
+                                .font(.caption).opacity(0.6).padding(.horizontal, 4)
                             
                             HStack(spacing: 8) {
                                 ForEach(timeoutOptions, id: \.self) { mins in
@@ -501,7 +505,7 @@ struct SettingsView: View {
                                             .font(.caption2)
                                             .frame(maxWidth: .infinity)
                                             .padding(.vertical, 6)
-                                            .background(manager.idleThreshold == mins * 60 ? Color.primary.opacity(0.15) : Color.primary.opacity(0.05))
+                                            .background(manager.idleThreshold == mins * 60 ? manager.foreground(opacity: 0.15) : manager.foreground(opacity: 0.05))
                                             .cornerRadius(6)
                                     }.buttonStyle(.plain)
                                 }
@@ -516,12 +520,12 @@ struct SettingsView: View {
                                 Image(systemName: "chevron.right").font(.caption)
                             }
                             .padding(12)
-                            .background(Color.primary.opacity(0.05))
+                            .background(manager.foreground(opacity: 0.05))
                             .cornerRadius(8)
                         }.buttonStyle(TallyButtonStyle())
                         
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Manage Projects").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 4)
+                            Text("Manage Projects").font(.caption).opacity(0.6).padding(.horizontal, 4)
                             
                             ForEach(manager.projects) { project in
                                 HStack {
@@ -538,14 +542,14 @@ struct SettingsView: View {
                                     }
                                 }
                                 .padding(10)
-                                .background(Color.primary.opacity(0.05))
+                                .background(manager.foreground(opacity: 0.05))
                                 .cornerRadius(8)
                             }
                         }
                     }.padding()
                 }
                 
-                Divider().overlay(Color.primary.opacity(0.1))
+                Divider().overlay(manager.foreground(opacity: 0.1))
                 TallyFooter()
             }
             
@@ -563,7 +567,7 @@ struct SettingsView: View {
                          "Are you sure you want to delete '\(projectToDelete?.name ?? "")'? This will remove all history and cannot be undone.")
                         .font(.caption)
                         .multilineTextAlignment(.center)
-                        .foregroundStyle(.secondary)
+                        .opacity(0.6)
                     
                     HStack(spacing: 20) {
                         Button("Cancel") {
@@ -620,12 +624,12 @@ struct HistoryView: View {
                     }.buttonStyle(TallyButtonStyle())
                 }.padding()
                 
-                Divider().overlay(Color.primary.opacity(0.1))
+                Divider().overlay(manager.foreground(opacity: 0.1))
                 
                 ScrollView {
                     VStack(spacing: 8) {
                         if manager.sessions.isEmpty {
-                            Text("No recorded sessions.").foregroundStyle(.secondary).padding()
+                            Text("No recorded sessions.").opacity(0.6).padding()
                         } else {
                             // Delete All Button
                             Button(action: { showDeleteAllConfirmation = true }) {
@@ -634,7 +638,7 @@ struct HistoryView: View {
                                     Spacer()
                                 }
                                 .padding(10)
-                                .background(Color.primary.opacity(0.05))
+                                .background(manager.foreground(opacity: 0.05))
                                 .cornerRadius(8)
                             }.buttonStyle(TallyButtonStyle())
                             .padding(.bottom, 8)
@@ -643,7 +647,7 @@ struct HistoryView: View {
                                 HStack {
                                     VStack(alignment: .leading) {
                                         Text(manager.projectName(for: session.projectId)).font(.subheadline).fontWeight(.medium)
-                                        Text(session.startTime.formatted(date: .omitted, time: .shortened)).font(.caption2).foregroundStyle(.secondary)
+                                        Text(session.startTime.formatted(date: .omitted, time: .shortened)).font(.caption2).opacity(0.6)
                                     }
                                     Spacer()
                                     HStack(spacing: 8) {
@@ -655,13 +659,13 @@ struct HistoryView: View {
                                             Image(systemName: "trash").font(.caption)
                                         }.buttonStyle(TallyButtonStyle())
                                     }
-                                }.padding(8).background(Color.primary.opacity(0.05)).cornerRadius(6)
+                                }.padding(8).background(manager.foreground(opacity: 0.05)).cornerRadius(6)
                             }
                         }
                     }.padding()
                 }
                 
-                Divider().overlay(Color.primary.opacity(0.1))
+                Divider().overlay(manager.foreground(opacity: 0.1))
                 TallyFooter()
             }
             
@@ -679,7 +683,7 @@ struct HistoryView: View {
                          "Are you sure you want to delete this session? This will update the project total.")
                         .font(.caption)
                         .multilineTextAlignment(.center)
-                        .foregroundStyle(.secondary)
+                        .opacity(0.6)
                     
                     HStack(spacing: 20) {
                         Button("Cancel") {
@@ -712,6 +716,16 @@ struct HistoryView: View {
         .frame(width: 320, height: 400)
         .tallyTheme(manager: manager)
         .navigationBarBackButtonHidden(true)
+    }
+}
+
+// MARK: - Extension
+
+extension TrackerManager {
+    func foreground(opacity: Double = 1.0) -> Color {
+        let isDark = (appTheme == .dark) || (appTheme == .system && NSApp.effectiveAppearance.name == .darkAqua)
+        let base = isDark ? Color.tallyLight : Color.tallyDark
+        return base.opacity(opacity)
     }
 }
 
