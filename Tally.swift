@@ -4,6 +4,7 @@ import IOKit
 import UserNotifications
 import AppKit
 import ServiceManagement
+import Combine
 
 // MARK: - Theme
 
@@ -494,6 +495,9 @@ struct SettingsView: View {
     @State private var adjH = 0
     @State private var adjM = 0
     @State private var adjS = 0
+    @State private var adjHStr = ""
+    @State private var adjMStr = ""
+    @State private var adjSStr = ""
     @State private var initialTotal: TimeInterval = 0
     
     let timeoutOptions: [Double] = [1, 2, 5, 10, 15, 30]
@@ -637,7 +641,7 @@ struct SettingsView: View {
                                     if let p = projectToReset { manager.resetProjectTime(id: p.id); projectToReset = nil }
                                     else if let p = projectToDelete { manager.deleteProject(id: p.id); projectToDelete = nil }
                                 }
-                            }.buttonStyle(TallyButtonStyle()).fontWeight(.bold)
+                            }.buttonStyle(TallyButtonStyle())
                         }
                     }
                     .padding()
@@ -660,11 +664,11 @@ struct SettingsView: View {
             Text(projectToAdjust?.name ?? "").font(.caption).opacity(0.6)
             
             HStack(spacing: 16) {
-                timeStepper(value: $adjH, label: "H", max: 999)
+                timeStepper(value: $adjH, strValue: $adjHStr, label: "H", max: 999)
                 Text(":").font(.title3).offset(y: -8)
-                timeStepper(value: $adjM, label: "M", max: 59)
+                timeStepper(value: $adjM, strValue: $adjMStr, label: "M", max: 59)
                 Text(":").font(.title3).offset(y: -8)
-                timeStepper(value: $adjS, label: "S", max: 59)
+                timeStepper(value: $adjS, strValue: $adjSStr, label: "S", max: 59)
             }
             
             HStack(spacing: 20) {
@@ -674,7 +678,7 @@ struct SettingsView: View {
                 
                 Button("Apply") {
                     applyAdjustment()
-                }.buttonStyle(TallyButtonStyle()).fontWeight(.bold)
+                }.buttonStyle(TallyButtonStyle())
             }
         }
         .padding()
@@ -684,22 +688,39 @@ struct SettingsView: View {
         .shadow(radius: 10)
     }
     
-    private func timeStepper(value: Binding<Int>, label: String, max: Int) -> some View {
+    private func timeStepper(value: Binding<Int>, strValue: Binding<String>, label: String, max: Int) -> some View {
         VStack(spacing: 4) {
-            Button(action: { value.wrappedValue = (value.wrappedValue + 1 > max) ? 0 : value.wrappedValue + 1 }) {
+            Button(action: { 
+                value.wrappedValue = (value.wrappedValue + 1 > max) ? 0 : value.wrappedValue + 1
+                strValue.wrappedValue = String(format: "%02d", value.wrappedValue)
+            }) {
                 Image(systemName: "chevron.up")
                     .font(.caption2)
                     .padding(4)
             }.buttonStyle(TallyButtonStyle())
             
-            Text(String(format: "%02d", value.wrappedValue))
+            TextField("", text: strValue)
                 .font(.system(.title3, design: .monospaced))
                 .fontWeight(.bold)
+                .multilineTextAlignment(.center)
                 .frame(width: 40, height: 30)
                 .background(manager.foreground(system: systemColorScheme, opacity: 0.05))
                 .cornerRadius(4)
+                .textFieldStyle(.plain)
+                .onChange(of: strValue.wrappedValue) { oldValue, newValue in
+                    let filtered = newValue.filter { "0123456789".contains($0) }
+                    if let num = Int(filtered) {
+                        value.wrappedValue = Swift.min(num, max)
+                        strValue.wrappedValue = String(format: "%02d", value.wrappedValue)
+                    } else if filtered.isEmpty {
+                        value.wrappedValue = 0
+                    }
+                }
             
-            Button(action: { value.wrappedValue = (value.wrappedValue - 1 < 0) ? max : value.wrappedValue - 1 }) {
+            Button(action: { 
+                value.wrappedValue = (value.wrappedValue - 1 < 0) ? max : value.wrappedValue - 1
+                strValue.wrappedValue = String(format: "%02d", value.wrappedValue)
+            }) {
                 Image(systemName: "chevron.down")
                     .font(.caption2)
                     .padding(4)
@@ -715,6 +736,9 @@ struct SettingsView: View {
         adjH = Int(total) / 3600
         adjM = (Int(total) % 3600) / 60
         adjS = Int(total) % 60
+        adjHStr = String(format: "%02d", adjH)
+        adjMStr = String(format: "%02d", adjM)
+        adjSStr = String(format: "%02d", adjS)
         projectToAdjust = project
     }
     
@@ -805,7 +829,7 @@ struct HistoryView: View {
                                 if showDeleteAllConfirmation { manager.deleteAllSessions(); showDeleteAllConfirmation = false }
                                 else if let s = sessionToDelete { manager.deleteSession(id: s.id); sessionToDelete = nil }
                             }
-                        }.buttonStyle(TallyButtonStyle()).fontWeight(.bold)
+                        }.buttonStyle(TallyButtonStyle())
                     }
                 }
                 .padding().frame(width: 260).tallyTheme(manager: manager).cornerRadius(12).shadow(radius: 10)
