@@ -1,65 +1,24 @@
 # Tally
 
-**Tally** is a minimalist macOS Menu Bar app designed for seamless time tracking. Built with SwiftUI and a focus on essential productivity, it stays out of your way while keeping your project time perfectly accounted for.
+**Tally** is a minimalist, distraction-free time tracker designed exclusively for the macOS Menu Bar. Built with a focus on simplicity and reliability, Tally helps you account for every second spent on your projects without cluttering your workspace.
+
+## Essential Minimalism
+
+Tally is designed to stay out of your way. With a strict dual-tone aesthetic (`#2a2529` and `#f3f0e7`), it feels like a native part of macOS. Whether you prefer **Light**, **Dark**, or **System** appearance, the interface remains high-contrast, legible, and elegant.
 
 ## Key Features
 
-- **MenuBar-First UI**: Access your timers instantly from the macOS Menu Bar. No Dock icon, no clutter.
-- **Cumulative Project Tracking**: Track total time spent across multiple sessions for each project.
-- **Heartbeat Persistence**: Automatically saves your progress every 30 seconds. If the app crashes or the system shuts down, Tally recovers your session to the last heartbeat.
-- **System Idle Detection**: Automatically pauses your timer after 5 minutes of system inactivity to ensure your tracking is accurate.
-- **Minimalist Aesthetic**: A focused, dual-tone theme (`#2a2529` and `#f3f0e7`) that adapts to your system's Light and Dark modes.
-- **Project Management**: Dedicated settings page to reset timers or delete projects with safe confirmation overlays.
-- **Session History**: Detailed history of all recorded sessions with the ability to manually adjust time in 5-minute increments.
+- **MenuBar Extra Style**: A pure background agent app that lives in your Menu Bar. No Dock icon, just instant access.
+- **Cumulative Tracking**: Effortlessly track total project time across multiple sessions. Start and stop projects as needed; Tally always remembers where you left off.
+- **Precision Adjustment**: Need to fix a tracking error? Manually adjust project totals using an intuitive stepper UI or direct numerical entry.
+- **Heartbeat Data Protection**: Tally saves your progress every 30 seconds. In the event of a crash or sudden restart, your sessions are automatically concluded at the last heartbeat to prevent data loss.
+- **Smart Idle Detection**: Set your preferred idle threshold (from 1 to 30 minutes). Tally monitors system activity and automatically pauses your timer when you walk away, ensuring tracking accuracy.
+- **Seamless Launch**: Toggle "Open on Launch" within the app to have your timers ready the moment you log in.
+- **Detailed History**: Manage your session history with individual deletions or a full history clear, all protected by safe confirmation overlays.
 
-## Technology Stack
+## Built for macOS
 
-- **Language**: Swift 6.0
-- **Framework**: SwiftUI (macOS 14+)
-- **System APIs**: `IOKit` (HIDIdleTime for inactivity detection), `UserNotifications` for gap recovery alerts.
-- **Persistence**: `Codable` and `UserDefaults` for reliable data storage.
+Tally leverages modern macOS frameworks including **SwiftUI 6.0**, **ServiceManagement** for login items, and **IOKit** for low-level system idle detection. It is optimized for macOS 14+ and silicon performance.
 
-## Building and Running
-
-### Prerequisites
-- macOS 14.0 or later
-- Xcode 15.0 or later (for the Swift compiler)
-
-### Build via Terminal
-To compile Tally into a standalone App Bundle:
-
-```bash
-# Compile the Swift source
-swiftc -O -o Tally Tally.swift -framework SwiftUI -framework IOKit -framework UserNotifications -framework AppKit -parse-as-library
-
-# Create the App Bundle structure
-mkdir -p Tally.app/Contents/MacOS
-cp Tally Tally.app/Contents/MacOS/Tally
-
-# Create the Info.plist (required for Menu Bar Agent mode)
-cat <<EOF > Tally.app/Contents/Info.plist
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>Tally</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.sam.tally</string>
-    <key>CFBundleName</key>
-    <string>Tally</string>
-    <key>CFBundleVersion</key>
-    <string>1.0</string>
-    <key>LSUIElement</key>
-    <true/>
-</dict>
-</plist>
-EOF
-
-# Launch the app
-open Tally.app
-```
-
-## License
-
-Personal use project.
+---
+*Personal use project.*
